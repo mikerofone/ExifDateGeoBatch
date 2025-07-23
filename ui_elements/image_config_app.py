@@ -52,7 +52,7 @@ class ImageExifEditor(QMainWindow):
         self.setCentralWidget(splitter)
 
         # Left pane: image list
-        self.image_list_widget = CustomListView()
+        self.image_list_widget = CustomListView(self.get_exif_from)
         self.setup_image_list()
 
         # Right pane: configs
@@ -61,8 +61,8 @@ class ImageExifEditor(QMainWindow):
         self.config_layout = QVBoxLayout(config_widget)
 
         self.init_batch_edit_widgets()
-        self.hide_batch_edit_widgets()
         self.setup_config_panel()
+        self.hide_batch_edit_widgets()
 
         splitter.addWidget(self.image_list_widget)
         splitter.addWidget(config_widget)
@@ -141,7 +141,10 @@ class ImageExifEditor(QMainWindow):
         self.date_edit = QDateTimeEdit()
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
-        self.date_edit.setDateTime(datetime.today())
+        self.set_date_now()
+
+        self.now_btn = QPushButton("Now")
+        self.now_btn.clicked.connect(self.set_date_now)
 
         self.gps_edit = QLineEdit()
         self.apply_btn = QPushButton("Apply changes")
@@ -155,23 +158,20 @@ class ImageExifEditor(QMainWindow):
         else:
             self.statusBar.showMessage("No directory selected", 5000)
 
-    def hide_batch_edit_widgets(self):
-        self.date_edit.setEnabled(False)
+    def set_date_now(self):
         self.date_edit.setDateTime(datetime.today())
+
+    def hide_batch_edit_widgets(self):
+        self.edit_group.setEnabled(False)
         self.gps_edit.clear()
-        self.gps_edit.setEnabled(False)
-        self.apply_btn.setEnabled(False)
 
     def prepare_batch_edit(self):
         self.exif_data_label.setText("")
         self.show_batch_edit_widgets()
 
     def show_batch_edit_widgets(self, single_image=True):
-        self.date_edit.setEnabled(True)
-        self.gps_edit.setEnabled(True)
-        self.apply_btn.setEnabled(True)
+        self.edit_group.setEnabled(True)
         if not single_image:
-            self.date_edit.setDateTime(datetime.today())
             self.gps_edit.clear()
 
     def on_image_selected(self, selected, deselected):
@@ -183,26 +183,42 @@ class ImageExifEditor(QMainWindow):
 
         self.display_exif_data(indexes)
 
+    def load_exif_dict_from(self, filename):
+        filepath = os.path.join(self.current_directory, filename)
+        try:
+            exif_dict = piexif.load(filepath)
+        except Exception as e:
+            self.statusBar.showMessage(
+                f"Error processing file {filepath}: {e}", 5000
+            )
+            self.exif_data_label.setText(
+                f"{filename}: Error reading EXIF data - {e}"
+            )
+            return None
+        return exif_dict
+
     def display_exif_data(self, indexes):
         if len(indexes) == 1:
             filename = indexes[0].data()
-            filepath = os.path.join(self.current_directory, filename)
-            try:
-                exif_dict = piexif.load(filepath)
-                self.show_exif_data(exif_dict, filename)
-            except Exception as e:
-                self.statusBar.showMessage(
-                    f"Error processing file {filepath}: {e}", 5000
-                )
-                self.exif_data_label.setText(
-                    f"{filename}: Error reading EXIF data - {e}"
-                )
+            exif_dict = self.load_exif_dict_from(filename)
+            if not exif_dict:
+                return
+            self.show_exif_data(exif_dict, filename)
             self.show_batch_edit_widgets(single_image=True)
         else:
             self.exif_data_label.setText(
-                "Multiple images selected.\nApply batch EXIF data changes."
+                "Multiple images selected.\n"
+                "Apply batch EXIF data changes.\n"
+                "Right-click an image to load its EXIF values without changing selection."
             )
             self.show_batch_edit_widgets(single_image=False)
+
+    def get_exif_from(self, index):
+        filename = index.data()
+        exif_dict = self.load_exif_dict_from(filename)
+        if not exif_dict:
+            return
+        self.show_exif_data(exif_dict, filename)
 
     def show_exif_data(self, exif_dict, filename):
         exif_data_texts = [f"File: {filename}"]
@@ -385,22 +401,30 @@ class ImageExifEditor(QMainWindow):
         exif_layout.setSpacing(5)
         exif_layout.setContentsMargins(10, 10, 10, 10)
         self.exif_data_label = QLabel("EXIF data will be shown here")
+        self.exif_data_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse |
+            Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
         exif_layout.addWidget(self.exif_data_label)
         exif_group.setLayout(exif_layout)
 
         # Configuration Group for batch editing
-        edit_group = QGroupBox("Edit EXIF Data")
+        self.edit_group = QGroupBox("Edit EXIF Data")
         edit_layout = QFormLayout()
         edit_layout.setSpacing(5)
         edit_layout.setContentsMargins(5, 10, 5, 10)
-        edit_layout.addRow("New Date (YYYY-MM-DD):", self.date_edit)
+        datetime_layout = QHBoxLayout()
+        datetime_layout.setSpacing(5)
+        datetime_layout.addWidget(self.date_edit)
+        datetime_layout.addWidget(self.now_btn)
+        edit_layout.addRow("New Date (YYYY-MM-DD):", datetime_layout)
         edit_layout.addRow("New GPS Coordinates (lat, long):", self.gps_edit)
         edit_layout.addRow(self.apply_btn)
-        edit_group.setLayout(edit_layout)
+        self.edit_group.setLayout(edit_layout)
 
         # Add groups to the configuration layout
         self.config_layout.addWidget(exif_group)
-        self.config_layout.addWidget(edit_group)
+        self.config_layout.addWidget(self.edit_group)
         self.config_layout.addWidget(self.directory_btn)
         self.config_layout.addStretch()
 
