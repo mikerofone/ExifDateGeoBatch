@@ -285,7 +285,7 @@ class ImageExifEditor(QMainWindow):
                 "Invalid time format. Please use HH:mm:ss", 5000
             )
             return
-        if not is_valid_gps(new_gps):
+        if new_gps and not is_valid_gps(new_gps):
             self.statusBar.showMessage(
                 "Invalid GPS format. Please use decimal degrees (lat, long).", 5000
             )
@@ -305,12 +305,14 @@ class ImageExifEditor(QMainWindow):
         try:
             exif_dict = piexif.load(filepath)
 
-            exif_date = format_datetime_for_exif(new_date, new_time)
-            exif_dict["Exif"][piexif.ExifIFD.DateTimeOriginal] = exif_date
+            if new_date or new_time:
+                exif_date = format_datetime_for_exif(new_date, new_time)
+                exif_dict["Exif"][piexif.ExifIFD.DateTimeOriginal] = exif_date
 
-            exif_gps = format_gps_for_exif(new_gps)
-            for tag in exif_gps:
-                exif_dict["GPS"][piexif.GPSIFD.__dict__[tag]] = exif_gps[tag]
+            if new_gps:
+                exif_gps = format_gps_for_exif(new_gps)
+                for tag in exif_gps:
+                    exif_dict["GPS"][piexif.GPSIFD.__dict__[tag]] = exif_gps[tag]
 
             exif_bytes = piexif.dump(exif_dict)
             piexif.insert(exif_bytes, filepath)
