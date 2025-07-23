@@ -330,6 +330,7 @@ class ImageExifEditor(QMainWindow):
         self.move(int(x), int(y))
 
     def load_images_from_folder(self, folder_path):
+        self.statusBar.showMessage(f"Indexing {folder_path}")
         self.progress_bar.show()
         self.progress_bar.setValue(0)
 
