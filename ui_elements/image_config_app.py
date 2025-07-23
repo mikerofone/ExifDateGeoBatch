@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 
 import piexif
-from PyQt6.QtCore import QSize, Qt, QDate, QUrl
+from PyQt6.QtCore import QSize, Qt, QDate, QTime, QDateTime, QUrl
 from PyQt6.QtGui import QStandardItemModel
 from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QSlider,
     QPushButton,
-    QDateEdit,
+    QDateTimeEdit,
     QLineEdit,
     QFileDialog,
     QApplication,
@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
 
 from custom_widgets.custom_list_view import CustomListView
 from utils.exif_utils import convert_to_degrees
-from utils.exif_utils import format_gps_for_exif, is_valid_date, is_valid_gps, format_date_for_exif
+from utils.exif_utils import format_gps_for_exif, is_valid_date, is_valid_time, is_valid_gps, format_datetime_for_exif
 from utils.image_loader_thread import ImageLoaderThread
 from utils.python_bridge import PythonBridge
 
@@ -138,10 +138,10 @@ class ImageExifEditor(QMainWindow):
         self.directory_btn = QPushButton("Select Directory")
         self.directory_btn.clicked.connect(self.select_directory)
 
-        self.date_edit = QDateEdit()
+        self.date_edit = QDateTimeEdit()
         self.date_edit.setCalendarPopup(True)
-        self.date_edit.setDisplayFormat("yyyy-MM-dd")
-        self.date_edit.setDate(datetime.today())
+        self.date_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        self.date_edit.setDateTime(datetime.today())
 
         self.gps_edit = QLineEdit()
         self.apply_btn = QPushButton("Apply changes")
@@ -157,7 +157,7 @@ class ImageExifEditor(QMainWindow):
 
     def hide_batch_edit_widgets(self):
         self.date_edit.setEnabled(False)
-        self.date_edit.setDate(datetime.today())
+        self.date_edit.setDateTime(datetime.today())
         self.gps_edit.clear()
         self.gps_edit.setEnabled(False)
         self.apply_btn.setEnabled(False)
@@ -171,7 +171,7 @@ class ImageExifEditor(QMainWindow):
         self.gps_edit.setEnabled(True)
         self.apply_btn.setEnabled(True)
         if not single_image:
-            self.date_edit.setDate(datetime.today())
+            self.date_edit.setDateTime(datetime.today())
             self.gps_edit.clear()
 
     def on_image_selected(self, selected, deselected):
@@ -209,12 +209,20 @@ class ImageExifEditor(QMainWindow):
         current_date = current_gps = ""
         date_parts = None
         if piexif.ExifIFD.DateTimeOriginal in exif_dict["Exif"]:
-            current_date = exif_dict["Exif"][piexif.ExifIFD.DateTimeOriginal].decode(
+            current_datetime = exif_dict["Exif"][piexif.ExifIFD.DateTimeOriginal].decode(
                 "utf-8"
             )
-            date_parts = current_date[:10].split(":")
-            current_date = current_date[:10].replace(":", "-")
-            exif_data_texts.append(f"Original Creation Date: {current_date}")
+            # Format is "YYYY:MM:DD HH:MM:SS".
+            if " " in current_datetime:
+                current_date, current_time = current_datetime.split(" ")
+            else:
+                # Assume missing timestamp, trim after date.
+                current_date = current_datetime[:10]
+                current_time = "00:00:00"
+            date_parts = current_date.split(":")
+            time_parts = current_time.split(":")
+            current_date = current_date.replace(":", "-")
+            exif_data_texts.append(f"Original Creation Date: {current_date} {current_time}")
         else:
             exif_data_texts.append(f"No Creation Date set")
 
@@ -226,9 +234,12 @@ class ImageExifEditor(QMainWindow):
             exif_data_texts.append(f"GPS Coordinates: {current_gps}")
 
         self.exif_data_label.setText("\n".join(exif_data_texts))
-        if date_parts:
-            self.date_edit.setDate(
-                QDate(int(date_parts[0]), int(date_parts[1]), int(date_parts[2]))
+        if date_parts and time_parts:
+            self.date_edit.setDateTime(
+                QDateTime(
+                    QDate(int(date_parts[0]), int(date_parts[1]), int(date_parts[2])),
+                    QTime(int(time_parts[0]), int(time_parts[1]), int(time_parts[2]))
+                )
             )
         self.gps_edit.setText(current_gps)
 
@@ -260,12 +271,18 @@ class ImageExifEditor(QMainWindow):
         return gps_data
 
     def apply_batch_edit(self):
-        new_date = self.date_edit.date().toString("yyyy-MM-dd")
+        new_date = self.date_edit.dateTime().toString("yyyy-MM-dd")
+        new_time = self.date_edit.dateTime().toString("HH:mm:ss")
         new_gps = self.gps_edit.text()
 
         if not is_valid_date(new_date):
             self.statusBar.showMessage(
                 "Invalid date format. Please use YYYY-MM-DD", 5000
+            )
+            return
+        if not is_valid_time(new_time):
+            self.statusBar.showMessage(
+                "Invalid time format. Please use HH:mm:ss", 5000
             )
             return
         if not is_valid_gps(new_gps):
@@ -277,18 +294,18 @@ class ImageExifEditor(QMainWindow):
         for index in self.image_list_widget.selectedIndexes():
             filename = index.data()
             filepath = os.path.join(self.current_directory, filename)
-            self.update_exif_data(filepath, new_date, new_gps)
+            self.update_exif_data(filepath, new_date, new_time, new_gps)
         self.statusBar.showMessage("Changes applied successfully", 5000)
 
         indexes = self.image_list_widget.selectedIndexes()
         if len(indexes) == 1:
             self.display_exif_data(indexes)
 
-    def update_exif_data(self, filepath, new_date, new_gps):
+    def update_exif_data(self, filepath, new_date, new_time, new_gps):
         try:
             exif_dict = piexif.load(filepath)
 
-            exif_date = format_date_for_exif(new_date)
+            exif_date = format_datetime_for_exif(new_date, new_time)
             exif_dict["Exif"][piexif.ExifIFD.DateTimeOriginal] = exif_date
 
             exif_gps = format_gps_for_exif(new_gps)
